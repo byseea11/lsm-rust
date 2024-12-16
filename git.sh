@@ -1,3 +1,3 @@
 git add .
-git commit -m "Initial commit on main branch"
+git commit -m "定义memtable接口"
 git push -u origin main
