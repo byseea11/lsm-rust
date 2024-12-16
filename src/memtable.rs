@@ -33,14 +33,33 @@ pub(crate) fn map_bound(bound: Bound<&[u8]>) -> Bound<Bytes> {
 /// 定义memtable接口
 impl MemTable {
     /// 创建memtable
-    pub fn create(id: usize, _path: impl AsRef<Path>) -> Self {
+    pub fn create(id: usize) -> Self {
         Self {
             map: Arc::new(SkipMap::new()),
-            // wal: Some(Wal::create(path.as_ref())?),
             wal: None,
             id,
             mem_size: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    pub fn create_with_wal(id: usize, path: impl AsRef<Path>) -> Result<Self> {
+        Ok(Self {
+            map: Arc::new(SkipMap::new()),
+            wal: Some(Wal::create(path.as_ref())?),
+            id,
+            mem_size: Arc::new(AtomicUsize::new(0)),
+        })
+    }
+
+    /// Create a memtable from WAL
+    pub fn recover_from_wal(id: usize, path: impl AsRef<Path>) -> Result<Self> {
+        let map = Arc::new(SkipMap::new());
+        Ok(Self {
+            id,
+            wal: Some(Wal::recover(path.as_ref(), &map)?),
+            map,
+            mem_size: Arc::new(AtomicUsize::new(0)),
+        })
     }
 
     /// 通过key获取value
@@ -55,7 +74,9 @@ impl MemTable {
             .insert(Bytes::copy_from_slice(key), Bytes::copy_from_slice(value));
         self.mem_size
             .fetch_add(total_size, std::sync::atomic::Ordering::Relaxed);
-        // self.wal.put(key, value);
+        if let Some(ref wal) = self.wal {
+            wal.put(key, value)?;
+        }
         Ok(())
     }
 
