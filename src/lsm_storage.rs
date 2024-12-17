@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 use std::fs::File;
+use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
@@ -223,4 +224,13 @@ impl LsmStorageInner {
         }
         Ok(())
     }
+
+    // 实现scan
+    // pub fn scan(
+    //     &self,
+    //     lower: Bound<&[u8]>,
+    //     upper: Bound<&[u8]>,
+    // ) -> Result<FusedIterator<LsmIterator>> {
+    //     unimplemented!()
+    // }
 }

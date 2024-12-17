@@ -1,16 +1,17 @@
 #![allow(dead_code)]
 
+use crate::iterators::StorageIterator;
+use crate::key::KeySlice;
+use crate::wal::Wal;
+use anyhow::Result;
+use bytes::Bytes;
+use crossbeam_skiplist::map::Entry;
+use crossbeam_skiplist::SkipMap;
+use ouroboros::self_referencing;
 use std::ops::Bound;
 use std::path::Path;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-
-use anyhow::Result;
-use bytes::Bytes;
-use crossbeam_skiplist::SkipMap;
-
-use crate::wal::Wal;
-
 /// map：跳表，用于存储数据
 /// id：每个memtable都有一个id方便后面压缩
 /// approximate_size：用于判断是否到达阈值
@@ -90,11 +91,70 @@ impl MemTable {
         self.mem_size.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    // 强制wal刷到磁盘
+    /// 强制wal刷到磁盘
     pub fn sync_wal(&self) -> Result<()> {
         if let Some(ref wal) = self.wal {
             wal.sync()?;
         }
+        Ok(())
+    }
+
+    /// scan范围扫描
+    pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> MemTableIterator {
+        let (lower, upper) = (map_bound(lower), map_bound(upper));
+        let mut iter = MemTableIteratorBuilder {
+            map: self.map.clone(),
+            iter_builder: |map| map.range((lower, upper)),
+            item: (Bytes::new(), Bytes::new()),
+        }
+        .build();
+        iter.next().unwrap();
+        iter
+    }
+}
+
+type SkipMapRangeIter<'a> =
+    crossbeam_skiplist::map::Range<'a, Bytes, (Bound<Bytes>, Bound<Bytes>), Bytes, Bytes>;
+
+/// 解决skipmaprangeIter的生命周期问题
+#[self_referencing]
+pub struct MemTableIterator {
+    /// skipmap
+    map: Arc<SkipMap<Bytes, Bytes>>,
+    /// skipmap iterator
+    #[borrows(map)]
+    #[not_covariant]
+    iter: SkipMapRangeIter<'this>,
+    /// 存储当前的kv
+    item: (Bytes, Bytes),
+}
+
+impl MemTableIterator {
+    fn entry_to_item(entry: Option<Entry<'_, Bytes, Bytes>>) -> (Bytes, Bytes) {
+        entry
+            .map(|x| (x.key().clone(), x.value().clone()))
+            .unwrap_or_else(|| (Bytes::from_static(&[]), Bytes::from_static(&[])))
+    }
+}
+
+impl StorageIterator for MemTableIterator {
+    type KeyType<'a> = KeySlice<'a>;
+
+    fn value(&self) -> &[u8] {
+        &self.borrow_item().1[..]
+    }
+
+    fn key(&self) -> KeySlice {
+        KeySlice::from_slice(&self.borrow_item().0[..])
+    }
+
+    fn is_valid(&self) -> bool {
+        !self.borrow_item().0.is_empty()
+    }
+
+    fn next(&mut self) -> Result<()> {
+        let entry = self.with_iter_mut(|iter| MemTableIterator::entry_to_item(iter.next()));
+        self.with_mut(|x| *x.item = entry);
         Ok(())
     }
 }
