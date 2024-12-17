@@ -224,13 +224,4 @@ impl LsmStorageInner {
         }
         Ok(())
     }
-
-    // 实现scan
-    // pub fn scan(
-    //     &self,
-    //     lower: Bound<&[u8]>,
-    //     upper: Bound<&[u8]>,
-    // ) -> Result<FusedIterator<LsmIterator>> {
-    //     unimplemented!()
-    // }
 }
