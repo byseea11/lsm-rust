@@ -1,5 +1,8 @@
-use crate::memtable::MemTable;
 use crate::wal::Wal;
+use crate::{
+    lsm_storage::{LsmStorageInner, LsmStorageOptions},
+    memtable::MemTable,
+};
 use bytes::Bytes;
 use crossbeam_skiplist::SkipMap;
 use std::fs;
@@ -44,4 +47,22 @@ fn test_task2_memtable_wal() {
     assert_eq!(&memtable2.get(b"key1").unwrap()[..], b"value1");
     assert_eq!(&memtable2.get(b"key2").unwrap()[..], b"value2");
     assert_eq!(&memtable2.get(b"key3").unwrap()[..], b"value3");
+}
+
+#[test]
+fn test_task3_lsmstorage() {
+    let dir = tempdir().unwrap();
+    let storage = Arc::new(
+        LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap(),
+    );
+    assert_eq!(&storage.get(b"0").unwrap(), &None);
+    storage.put(b"1", b"233").unwrap();
+    storage.put(b"2", b"2333").unwrap();
+    storage.put(b"3", b"23333").unwrap();
+    assert_eq!(&storage.get(b"1").unwrap().unwrap()[..], b"233");
+    assert_eq!(&storage.get(b"2").unwrap().unwrap()[..], b"2333");
+    assert_eq!(&storage.get(b"3").unwrap().unwrap()[..], b"23333");
+    storage.delete(b"2").unwrap();
+    assert!(storage.get(b"2").unwrap().is_none());
+    storage.delete(b"0").unwrap();
 }
