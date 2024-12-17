@@ -74,4 +74,11 @@ impl Wal {
         file.flush()?;
         Ok(())
     }
+
+    pub fn sync(&self) -> Result<()> {
+        let mut file = self.file.lock();
+        file.flush()?;
+        file.get_mut().sync_all()?;
+        Ok(())
+    }
 }

@@ -66,3 +66,29 @@ fn test_task3_lsmstorage() {
     assert!(storage.get(b"2").unwrap().is_none());
     storage.delete(b"0").unwrap();
 }
+
+#[test]
+fn test_task4_storage_integration() {
+    let dir = tempdir().unwrap();
+    let storage = Arc::new(
+        LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap(),
+    );
+    storage.put(b"1", b"233").unwrap();
+    storage.put(b"2", b"2333").unwrap();
+    storage.put(b"3", b"23333").unwrap();
+    storage.force_freeze_memtable().unwrap();
+    assert_eq!(storage.arch.read().imm_memtables.len(), 1);
+    let previous_mem_size = storage.arch.read().imm_memtables[0].mem_size();
+    assert!(previous_mem_size >= 15);
+    storage.put(b"1", b"2333").unwrap();
+    storage.put(b"2", b"23333").unwrap();
+    storage.put(b"3", b"233333").unwrap();
+    storage.force_freeze_memtable().unwrap();
+    assert_eq!(storage.arch.read().imm_memtables.len(), 2);
+    assert!(
+        storage.arch.read().imm_memtables[1].mem_size() == previous_mem_size,
+        "wrong order of memtables?"
+    );
+
+    assert!(storage.arch.read().imm_memtables[0].mem_size() > previous_mem_size);
+}

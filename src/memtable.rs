@@ -89,4 +89,11 @@ impl MemTable {
     pub fn mem_size(&self) -> usize {
         self.mem_size.load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    pub fn sync_wal(&self) -> Result<()> {
+        if let Some(ref wal) = self.wal {
+            wal.sync()?;
+        }
+        Ok(())
+    }
 }

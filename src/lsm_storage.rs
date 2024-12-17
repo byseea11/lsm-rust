@@ -1,8 +1,10 @@
 use crate::memtable::MemTable;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use parking_lot::{Mutex, MutexGuard, RwLock};
+use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -54,19 +56,28 @@ pub(crate) struct LsmStorageInner {
     pub(crate) arch: Arc<RwLock<Arc<LsmStorageArch>>>,
     // memtable的wal需要path
     path: PathBuf,
+    next_sst_id: AtomicUsize,
     pub(crate) options: Arc<LsmStorageOptions>,
 }
 
 impl LsmStorageInner {
+    pub(crate) fn next_sst_id(&self) -> usize {
+        self.next_sst_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
     /// Start the storage engine by either loading an existing directory or creating a new one if the directory does
     /// not exist.
     pub(crate) fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Self> {
         let path = path.as_ref();
         let arch = LsmStorageArch::create(&options);
-
+        let next_sst_id = 1;
+        if !path.exists() {
+            std::fs::create_dir_all(path).context("failed to create DB dir")?;
+        }
         let storage = Self {
             arch: Arc::new(RwLock::new(Arc::new(arch))),
             path: path.to_path_buf(),
+            next_sst_id: AtomicUsize::new(next_sst_id),
             options: options.into(),
         };
 
@@ -105,8 +116,52 @@ impl LsmStorageInner {
         guard.memtable.put(key, b"")?;
         Ok(())
     }
+
+    pub(crate) fn path_of_wal_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
+        path.as_ref().join(format!("{:05}.wal", id))
+    }
+
+    pub(crate) fn path_of_wal(&self, id: usize) -> PathBuf {
+        Self::path_of_wal_static(&self.path, id)
+    }
+
+    pub(super) fn sync_dir(&self) -> Result<()> {
+        File::open(&self.path)?.sync_all()?;
+        Ok(())
+    }
+
     /// Force freeze the current memtable to an immutable memtable
-    pub fn force_freeze_memtable(&self, _state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
-        unimplemented!()
+    pub fn force_freeze_memtable(&self) -> Result<()> {
+        let memtable_id = self.next_sst_id();
+        let memtable = if self.options.enable_wal {
+            Arc::new(MemTable::create_with_wal(
+                memtable_id,
+                self.path_of_wal(memtable_id),
+            )?)
+        } else {
+            Arc::new(MemTable::create(memtable_id))
+        };
+
+        self.freeze_memtable_with_memtable(memtable)?;
+
+        self.sync_dir()?;
+
+        Ok(())
+    }
+
+    fn freeze_memtable_with_memtable(&self, memtable: Arc<MemTable>) -> Result<()> {
+        let mut guard = self.arch.write();
+        // Swap the current memtable with a new one.
+        let mut snapshot = guard.as_ref().clone();
+        let old_memtable = std::mem::replace(&mut snapshot.memtable, memtable);
+        // Add the memtable to the immutable memtables.
+        snapshot.imm_memtables.insert(0, old_memtable.clone());
+        // Update the snapshot.
+        *guard = Arc::new(snapshot);
+
+        drop(guard);
+        old_memtable.sync_wal()?;
+
+        Ok(())
     }
 }
