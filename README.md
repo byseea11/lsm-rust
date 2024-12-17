@@ -5,7 +5,6 @@
      [x] sstable  
         [x] block  
         [x] bloom filter  
-        [x] 完成报告  
      [x] lsm storage arch  
         [x] interface
         [x] cli
