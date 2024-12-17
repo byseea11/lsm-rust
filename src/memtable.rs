@@ -90,6 +90,7 @@ impl MemTable {
         self.mem_size.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    // 强制wal刷到磁盘
     pub fn sync_wal(&self) -> Result<()> {
         if let Some(ref wal) = self.wal {
             wal.sync()?;

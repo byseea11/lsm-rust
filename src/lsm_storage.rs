@@ -130,9 +130,11 @@ impl LsmStorageInner {
         Ok(())
     }
 
-    /// Force freeze the current memtable to an immutable memtable
+    /// 强制把memtable冻结为im_memtable
     pub fn force_freeze_memtable(&self) -> Result<()> {
+        // 获取最新memtable的id
         let memtable_id = self.next_sst_id();
+        // 创建新的memtable
         let memtable = if self.options.enable_wal {
             Arc::new(MemTable::create_with_wal(
                 memtable_id,
@@ -143,23 +145,25 @@ impl LsmStorageInner {
         };
 
         self.freeze_memtable_with_memtable(memtable)?;
-
+        // 标志着一个数据写入周期的结束
         self.sync_dir()?;
 
         Ok(())
     }
 
     fn freeze_memtable_with_memtable(&self, memtable: Arc<MemTable>) -> Result<()> {
+        // 获取锁
         let mut guard = self.arch.write();
         // Swap the current memtable with a new one.
         let mut snapshot = guard.as_ref().clone();
+        // 当前的memtable替换为新的memtable
         let old_memtable = std::mem::replace(&mut snapshot.memtable, memtable);
-        // Add the memtable to the immutable memtables.
+        // 把旧表插入到索引为0的位置
         snapshot.imm_memtables.insert(0, old_memtable.clone());
-        // Update the snapshot.
+        // 更新snapshot
         *guard = Arc::new(snapshot);
-
         drop(guard);
+        // 保证数据完全写入
         old_memtable.sync_wal()?;
 
         Ok(())
