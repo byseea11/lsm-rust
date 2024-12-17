@@ -104,6 +104,17 @@ impl LsmStorageInner {
             }
             return Ok(Some(value));
         }
+
+        // 在immutable memtables中查找数据
+        for memtable in snapshot.imm_memtables.iter() {
+            if let Some(value) = memtable.get(key) {
+                if value.is_empty() {
+                    // found tomestone, return key not exists
+                    return Ok(None);
+                }
+                return Ok(Some(value));
+            }
+        }
         Ok(None)
     }
 

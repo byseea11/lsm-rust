@@ -94,7 +94,7 @@ fn test_task4_storage_integration() {
 }
 
 #[test]
-fn test_task3_freeze_on_capacity() {
+fn test_task5_freeze_on_capacity() {
     let dir = tempdir().unwrap();
     let mut options = LsmStorageOptions::default_for_week1_test();
     options.target_sst_size = 1024;
@@ -112,4 +112,29 @@ fn test_task3_freeze_on_capacity() {
         storage.arch.read().imm_memtables.len() > num_imm_memtables,
         "no more memtable frozen?"
     );
+}
+
+#[test]
+fn test_task6_storage_integration() {
+    let dir = tempdir().unwrap();
+    let storage = Arc::new(
+        LsmStorageInner::open(dir.path(), LsmStorageOptions::default_for_week1_test()).unwrap(),
+    );
+    assert_eq!(&storage.get(b"0").unwrap(), &None);
+    storage.put(b"1", b"233").unwrap();
+    storage.put(b"2", b"2333").unwrap();
+    storage.put(b"3", b"23333").unwrap();
+    storage.force_freeze_memtable().unwrap();
+    storage.delete(b"1").unwrap();
+    storage.delete(b"2").unwrap();
+    storage.put(b"3", b"2333").unwrap();
+    storage.put(b"4", b"23333").unwrap();
+    storage.force_freeze_memtable().unwrap();
+    storage.put(b"1", b"233333").unwrap();
+    storage.put(b"3", b"233333").unwrap();
+    assert_eq!(storage.arch.read().imm_memtables.len(), 2);
+    assert_eq!(&storage.get(b"1").unwrap().unwrap()[..], b"233333");
+    assert_eq!(&storage.get(b"2").unwrap(), &None);
+    assert_eq!(&storage.get(b"3").unwrap().unwrap()[..], b"233333");
+    assert_eq!(&storage.get(b"4").unwrap().unwrap()[..], b"23333");
 }
