@@ -7,7 +7,7 @@ use crate::key::{KeySlice, KeyVec};
 
 use super::Block;
 
-/// Iterates on a block.
+/// 块的迭代器
 pub struct BlockIterator {
     /// The internal `Block`, wrapped by an `Arc`
     block: Arc<Block>,
