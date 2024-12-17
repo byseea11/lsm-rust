@@ -1,4 +1,7 @@
-use crate::memtable::MemTable;
+use crate::iterators::merge_iterator::MergeIterator;
+use crate::memtable::{map_bound, MemTable, MemTableIterator};
+
+use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use parking_lot::{Mutex, MutexGuard, RwLock};
@@ -7,7 +10,6 @@ use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-
 #[derive(Clone)]
 
 /// 目前只实现到imm_memtables(不可变的memtable)这部分，所以把lsmstorageArch先定为这个两个部分
@@ -223,5 +225,25 @@ impl LsmStorageInner {
             }
         }
         Ok(())
+    }
+
+    /// scan实现
+    pub fn scan(
+        &self,
+        lower: Bound<&[u8]>,
+        upper: Bound<&[u8]>,
+    ) -> Result<FusedIterator<LsmIterator>> {
+        let snapshot = {
+            let guard = self.arch.read();
+            Arc::clone(&guard)
+        }; // drop global lock here
+
+        let mut memtable_iters = Vec::with_capacity(snapshot.imm_memtables.len() + 1);
+        memtable_iters.push(Box::new(snapshot.memtable.scan(lower, upper)));
+        for memtable in snapshot.imm_memtables.iter() {
+            memtable_iters.push(Box::new(memtable.scan(lower, upper)));
+        }
+        let memtable_iter = MergeIterator::create(memtable_iters);
+        Ok(FusedIterator::new(LsmIterator::new(memtable_iter)?))
     }
 }
