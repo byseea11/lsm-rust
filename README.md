@@ -20,4 +20,7 @@
     1. 构造lsm tree的内存基础架构
     2. 完成将memtable强制冻结为immemtable
     3. 完成将memtable自动转换为immemtable
+    4. 完成memtable的scan
+    5. block以及builder，迭代器明天再写吧
+    (真是很厉害nd的一天)
 

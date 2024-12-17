@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use anyhow::Context;
 use anyhow::Result;
 use bytes::Buf;

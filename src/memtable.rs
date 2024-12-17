@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::iterators::StorageIterator;
 use crate::key::KeySlice;
 use crate::wal::Wal;
