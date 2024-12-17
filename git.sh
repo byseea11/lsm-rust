@@ -1,3 +1,3 @@
 git add .
-git commit -m "实现memtable强制合并到imm_memtable"
+git commit -m "完成memtable动态合并"
 git push -u origin main

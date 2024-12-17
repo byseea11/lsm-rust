@@ -20,4 +20,5 @@
 ### task2【memtable immemtable】
     1. 构造lsm tree的内存基础架构
     2. 完成将memtable强制冻结为immemtable
+    3. 完成将memtable自动转换为immemtable
 

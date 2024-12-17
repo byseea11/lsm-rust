@@ -51,6 +51,12 @@ impl LsmStorageOptions {
     }
 }
 
+/// put和delete的逻辑类似，同时处理新增数据时memtable的阈值问题
+pub enum WriteBatchRecord<T: AsRef<[u8]>> {
+    Put(T, T),
+    Del(T),
+}
+
 /// The storage interface of the LSM tree.
 pub(crate) struct LsmStorageInner {
     pub(crate) arch: Arc<RwLock<Arc<LsmStorageArch>>>,
@@ -102,19 +108,11 @@ impl LsmStorageInner {
     }
 
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        //现在实现是还没有达到阈值
-        assert!(!key.is_empty(), "key cannot be empty");
-        assert!(!value.is_empty(), "value cannot be empty");
-        let guard = self.arch.read();
-        guard.memtable.put(key, value)?;
-        Ok(())
+        self.write_batch(&[WriteBatchRecord::Put(key, value)])
     }
     /// 删除也是插入一条记录，记录的值为“”，插入的时候必须插入不为“”的值
     pub fn delete(&self, key: &[u8]) -> Result<()> {
-        assert!(!key.is_empty(), "key cannot be empty");
-        let guard = self.arch.read();
-        guard.memtable.put(key, b"")?;
-        Ok(())
+        self.write_batch(&[WriteBatchRecord::Del(key)])
     }
 
     pub(crate) fn path_of_wal_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
@@ -166,6 +164,52 @@ impl LsmStorageInner {
         // 保证数据完全写入
         old_memtable.sync_wal()?;
 
+        Ok(())
+    }
+
+    /// 处理新增数据时，memtable的阈值问题
+    pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
+        for record in batch {
+            match record {
+                WriteBatchRecord::Del(key) => {
+                    let key = key.as_ref();
+                    assert!(!key.is_empty(), "key cannot be empty");
+                    let size;
+                    {
+                        let guard = self.arch.read();
+                        guard.memtable.put(key, b"")?;
+                        size = guard.memtable.mem_size();
+                    }
+                    self.try_freeze(size)?;
+                }
+                WriteBatchRecord::Put(key, value) => {
+                    let key = key.as_ref();
+                    let value = value.as_ref();
+                    assert!(!key.is_empty(), "key cannot be empty");
+                    assert!(!value.is_empty(), "value cannot be empty");
+                    let size;
+                    {
+                        let guard = self.arch.read();
+                        guard.memtable.put(key, value)?;
+                        size = guard.memtable.mem_size();
+                    }
+                    self.try_freeze(size)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn try_freeze(&self, estimated_size: usize) -> Result<()> {
+        if estimated_size >= self.options.target_sst_size {
+            // 使用读写锁将mem_size锁住，不让别的线程同时插入数据
+            let guard = self.arch.read();
+            // the memtable could have already been frozen, check again to ensure we really need to freeze
+            if guard.memtable.mem_size() >= self.options.target_sst_size {
+                drop(guard);
+                self.force_freeze_memtable()?;
+            }
+        }
         Ok(())
     }
 }

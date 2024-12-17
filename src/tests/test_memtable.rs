@@ -92,3 +92,24 @@ fn test_task4_storage_integration() {
 
     assert!(storage.arch.read().imm_memtables[0].mem_size() > previous_mem_size);
 }
+
+#[test]
+fn test_task3_freeze_on_capacity() {
+    let dir = tempdir().unwrap();
+    let mut options = LsmStorageOptions::default_for_week1_test();
+    options.target_sst_size = 1024;
+    options.num_memtable_limit = 1000;
+    let storage = Arc::new(LsmStorageInner::open(dir.path(), options).unwrap());
+    for _ in 0..1000 {
+        storage.put(b"1", b"2333").unwrap();
+    }
+    let num_imm_memtables = storage.arch.read().imm_memtables.len();
+    assert!(num_imm_memtables >= 1, "no memtable frozen?");
+    for _ in 0..1000 {
+        storage.delete(b"1").unwrap();
+    }
+    assert!(
+        storage.arch.read().imm_memtables.len() > num_imm_memtables,
+        "no more memtable frozen?"
+    );
+}
