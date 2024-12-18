@@ -2,8 +2,10 @@
 
      [√] memtable 
         [√] wal  
+        [√] iterator    
      [x] sstable  
         [√] block  
+        [x] iterator    
         [x] bloom filter  
      [x] lsm storage arch  
         [x] interface
@@ -26,3 +28,4 @@
 
 ### task3【sstable】
     1. 完成sstable builder以及sstable decoder encoder（太难了...）
+    2. 完成sstable iter
