@@ -29,3 +29,4 @@
 ### task3【sstable】
     1. 完成sstable builder以及sstable decoder encoder（太难了...）
     2. 完成sstable iter
+    3. 实现memtable和sst的merge

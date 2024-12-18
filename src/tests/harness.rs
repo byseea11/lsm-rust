@@ -13,9 +13,8 @@ use crate::{
     // },
     iterators::{merge_iterator::MergeIterator, StorageIterator},
     key::{KeySlice, TS_ENABLED},
-    lsm_storage::LsmStorageInner,
-    // lsm_storage::{BlockCache, LsmStorageInner, LsmStorageState, MiniLsm},
-    // table::{SsTable, SsTableBuilder, SsTableIterator},
+    lsm_storage::{LsmStorageArch, LsmStorageInner},
+    sstable::{SsTable, SsTableBuilder, SsTableIterator},
 };
 
 #[derive(Clone)]
@@ -181,41 +180,35 @@ pub fn expect_iter_error(mut iter: impl StorageIterator) {
     }
 }
 
-// pub fn generate_sst(
-//     id: usize,
-//     path: impl AsRef<Path>,
-//     data: Vec<(Bytes, Bytes)>,
-//     block_cache: Option<Arc<BlockCache>>,
-// ) -> SsTable {
-//     let mut builder = SsTableBuilder::new(128);
-//     for (key, value) in data {
-//         builder.add(KeySlice::for_testing_from_slice_no_ts(&key[..]), &value[..]);
-//     }
-//     builder.build(id, block_cache, path.as_ref()).unwrap()
-// }
+pub fn generate_sst(id: usize, path: impl AsRef<Path>, data: Vec<(Bytes, Bytes)>) -> SsTable {
+    let mut builder = SsTableBuilder::new(128);
+    for (key, value) in data {
+        builder.add(KeySlice::for_testing_from_slice_no_ts(&key[..]), &value[..]);
+    }
+    builder.build(id, path.as_ref()).unwrap()
+}
 
-// #[allow(dead_code)]
-// pub fn generate_sst_with_ts(
-//     id: usize,
-//     path: impl AsRef<Path>,
-//     data: Vec<((Bytes, u64), Bytes)>,
-//     block_cache: Option<Arc<BlockCache>>,
-// ) -> SsTable {
-//     let mut builder = SsTableBuilder::new(128);
-//     for ((key, ts), value) in data {
-//         builder.add(
-//             KeySlice::for_testing_from_slice_with_ts(&key[..], ts),
-//             &value[..],
-//         );
-//     }
-//     builder.build(id, block_cache, path.as_ref()).unwrap()
-// }
+#[allow(dead_code)]
+pub fn generate_sst_with_ts(
+    id: usize,
+    path: impl AsRef<Path>,
+    data: Vec<((Bytes, u64), Bytes)>,
+) -> SsTable {
+    let mut builder = SsTableBuilder::new(128);
+    for ((key, ts), value) in data {
+        builder.add(
+            KeySlice::for_testing_from_slice_with_ts(&key[..], ts),
+            &value[..],
+        );
+    }
+    builder.build(id, path.as_ref()).unwrap()
+}
 
 // pub fn sync(storage: &LsmStorageInner) {
-//     // storage
-//     //     .force_freeze_memtable(&storage.state_lock.lock())
-//     //     .unwrap();
-//     // storage.force_flush_next_imm_memtable().unwrap();
+//     storage
+//         .force_freeze_memtable(&storage.state_lock.lock())
+//         .unwrap();
+//     storage.force_flush_next_imm_memtable().unwrap();
 // }
 
 // pub fn compaction_bench(storage: Arc<MiniLsm>) {
