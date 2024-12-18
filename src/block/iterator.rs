@@ -1,77 +1,136 @@
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
-
 use std::sync::Arc;
 
-use crate::key::{KeySlice, KeyVec};
+use crate::{
+    block::SIZEOF_U16,
+    key::{KeySlice, KeyVec},
+};
+use bytes::Buf;
 
 use super::Block;
 
 /// 块的迭代器
 pub struct BlockIterator {
-    /// The internal `Block`, wrapped by an `Arc`
+    /// block
     block: Arc<Block>,
-    /// The current key, empty represents the iterator is invalid
+    /// 当前的key，如果为null则代表当前blockiterator无效
     key: KeyVec,
-    /// the current value range in the block.data, corresponds to the current key
+    /// block.data中的当前值范围，对应当前键
     value_range: (usize, usize),
-    /// Current index of the key-value pair, should be in range of [0, num_of_elements)
+    ///键值对的当前索引，在[0,num_of_elements)的范围内，方便next处理
     idx: usize,
-    /// The first key in the block
+    /// block中的第一个key
     first_key: KeyVec,
+}
+
+impl Block {
+    fn get_first_key(&self) -> KeyVec {
+        let mut buf = &self.data[..];
+        buf.get_u16();
+        let key_len = buf.get_u16();
+        let key = &buf[..key_len as usize];
+        KeyVec::from_vec(key.to_vec())
+    }
 }
 
 impl BlockIterator {
     fn new(block: Arc<Block>) -> Self {
         Self {
+            first_key: block.get_first_key(),
             block,
             key: KeyVec::new(),
             value_range: (0, 0),
             idx: 0,
-            first_key: KeyVec::new(),
         }
     }
 
-    /// Creates a block iterator and seek to the first entry.
+    /// 创建一个块迭代器并查找第一个entry.
     pub fn create_and_seek_to_first(block: Arc<Block>) -> Self {
-        unimplemented!()
+        let mut iter = Self::new(block);
+        iter.seek_to_first();
+        iter
     }
 
-    /// Creates a block iterator and seek to the first key that >= `key`.
+    /// 创建一个块迭代器，并查找>= key 的第一个键
     pub fn create_and_seek_to_key(block: Arc<Block>, key: KeySlice) -> Self {
-        unimplemented!()
+        let mut iter = Self::new(block);
+        iter.seek_to_key(key);
+        iter
     }
 
-    /// Returns the key of the current entry.
+    /// 获取key
     pub fn key(&self) -> KeySlice {
-        unimplemented!()
+        debug_assert!(!self.key.is_empty(), "invalid iterator");
+        self.key.as_key_slice()
     }
 
-    /// Returns the value of the current entry.
+    /// 获取value
     pub fn value(&self) -> &[u8] {
-        unimplemented!()
+        debug_assert!(!self.key.is_empty(), "invalid iterator");
+        &self.block.data[self.value_range.0..self.value_range.1]
     }
 
-    /// Returns true if the iterator is valid.
-    /// Note: You may want to make use of `key`
+    /// 判断iter是否有效
     pub fn is_valid(&self) -> bool {
-        unimplemented!()
+        !self.key.is_empty()
     }
 
-    /// Seeks to the first key in the block.
+    /// 寻找第一个key
     pub fn seek_to_first(&mut self) {
-        unimplemented!()
+        self.seek_to(0);
     }
 
-    /// Move to the next key in the block.
+    /// next
     pub fn next(&mut self) {
-        unimplemented!()
+        self.idx += 1;
+        self.seek_to(self.idx);
     }
 
-    /// Seek to the first key that >= `key`.
-    /// Note: You should assume the key-value pairs in the block are sorted when being added by
-    /// callers.
+    ///查找>= key 的第一个键，块中的键值对在添加时已排序（block是从memtable来的，所以block的data是有序的）
     pub fn seek_to_key(&mut self, key: KeySlice) {
-        unimplemented!()
+        let mut low = 0;
+        let mut high = self.block.offsets.len();
+        while low < high {
+            let mid = low + (high - low) / 2;
+            self.seek_to(mid);
+            assert!(self.is_valid());
+            match self.key().cmp(&key) {
+                std::cmp::Ordering::Less => low = mid + 1,
+                std::cmp::Ordering::Greater => high = mid,
+                std::cmp::Ordering::Equal => return,
+            }
+        }
+        self.seek_to(low);
+    }
+
+    /// 通过index获取key
+    fn seek_to(&mut self, idx: usize) {
+        if idx >= self.block.offsets.len() {
+            self.key.clear();
+            self.value_range = (0, 0);
+            return;
+        }
+        let offset = self.block.offsets[idx] as usize;
+        self.seek_to_offset(offset);
+        self.idx = idx;
+    }
+
+    // 通过offset获取data，offset记录的就是data的位置
+    fn seek_to_offset(&mut self, offset: usize) {
+        let mut entry = &self.block.data[offset..];
+        // 公共key
+        let overlap_len = entry.get_u16() as usize;
+        let key_len = entry.get_u16() as usize;
+        let key = &entry[..key_len];
+        self.key.clear();
+        let _test = self.first_key.raw_ref();
+        self.key.append(&self.first_key.raw_ref()[..overlap_len]);
+        self.key.append(key);
+        entry.advance(key_len);
+        // 获取value
+        let value_len = entry.get_u16() as usize;
+        let value_offset_begin = offset + SIZEOF_U16 + SIZEOF_U16 + key_len + SIZEOF_U16;
+        let value_offset_end = value_offset_begin + value_len;
+        self.value_range = (value_offset_begin, value_offset_end);
+        entry.advance(value_len);
     }
 }
