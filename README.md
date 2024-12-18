@@ -3,7 +3,7 @@
      [√] memtable 
         [√] wal  
      [x] sstable  
-        [x] block  
+        [√] block  
         [x] bloom filter  
      [x] lsm storage arch  
         [x] interface
@@ -22,5 +22,7 @@
     3. 完成将memtable自动转换为immemtable
     4. 完成memtable的scan
     5. block以及builder，迭代器明天再写吧
-    (真是很厉害nd的一天)
+    6. 完成block iterator
 
+### task3【sstable】
+    1. 完成sstable builder以及sstable decoder encoder（太难了...）
