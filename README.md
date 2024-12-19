@@ -30,3 +30,12 @@
     1. 完成sstable builder以及sstable decoder encoder（太难了...）
     2. 完成sstable iter
     3. 实现memtable和sst的merge
+
+### task4【read】
+    1. 实现memtable和sstable的scan
+
+### task5【write】
+    1. 将 Memtable 刷新到 SST
+
+### task6【cli】
+    1. 修改cli文件，实现本项目功能

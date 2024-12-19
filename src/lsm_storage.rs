@@ -67,6 +67,76 @@ impl LsmStorageOptions {
             num_memtable_limit: 50,
         }
     }
+
+    pub fn default_for_week1_day6_test() -> Self {
+        Self {
+            block_size: 4096,
+            target_sst_size: 2 << 20,
+            enable_wal: false,
+            num_memtable_limit: 2,
+        }
+    }
+}
+
+/// 实现后台线程
+pub struct MiniLsm {
+    pub(crate) inner: Arc<LsmStorageInner>,
+    /// 提示l0 flush线程停止工作
+    flush_notifier: crossbeam_channel::Sender<()>,
+    /// 开启flush线程
+    flush_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+impl MiniLsm {
+    /// 启动minilsm
+    pub fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Arc<Self>> {
+        let inner = Arc::new(LsmStorageInner::open(path, options)?);
+        let (tx2, rx) = crossbeam_channel::unbounded();
+        let flush_thread = inner.spawn_flush_thread(rx)?;
+        Ok(Arc::new(Self {
+            inner,
+            flush_notifier: tx2,
+            flush_thread: Mutex::new(flush_thread),
+        }))
+    }
+
+    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        self.inner.put(key, value)
+    }
+
+    pub fn close(&self) -> Result<()> {
+        unimplemented!()
+    }
+
+    pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
+        self.inner.write_batch(batch)
+    }
+
+    pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+        self.inner.get(key)
+    }
+
+    pub fn delete(&self, key: &[u8]) -> Result<()> {
+        self.inner.delete(key)
+    }
+
+    pub fn scan(
+        &self,
+        lower: Bound<&[u8]>,
+        upper: Bound<&[u8]>,
+    ) -> Result<FusedIterator<LsmIterator>> {
+        self.inner.scan(lower, upper)
+    }
+
+    pub fn force_flush(&self) -> Result<()> {
+        if !self.inner.arch.read().memtable.is_empty() {
+            self.inner.force_freeze_memtable()?;
+        }
+        if !self.inner.arch.read().imm_memtables.is_empty() {
+            self.inner.force_flush_next_imm_memtable()?;
+        }
+        Ok(())
+    }
 }
 
 /// put和delete的逻辑类似，同时处理新增数据时memtable的阈值问题
@@ -212,6 +282,14 @@ impl LsmStorageInner {
         Self::path_of_wal_static(&self.path, id)
     }
 
+    pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
+        path.as_ref().join(format!("{:05}.sst", id))
+    }
+
+    pub(crate) fn path_of_sst(&self, id: usize) -> PathBuf {
+        Self::path_of_sst_static(&self.path, id)
+    }
+
     pub(super) fn sync_dir(&self) -> Result<()> {
         File::open(&self.path)?.sync_all()?;
         Ok(())
@@ -238,6 +316,7 @@ impl LsmStorageInner {
         Ok(())
     }
 
+    /// 冻结memtable
     fn freeze_memtable_with_memtable(&self, memtable: Arc<MemTable>) -> Result<()> {
         // 获取锁
         let mut guard = self.arch.write();
@@ -357,5 +436,49 @@ impl LsmStorageInner {
             iter,
             map_bound(upper),
         )?))
+    }
+
+    /// 强制将最早创建的immemtable flush到磁盘
+    pub fn force_flush_next_imm_memtable(&self) -> Result<()> {
+        // 选择要flush的immemetable
+        let flush_memtable;
+
+        {
+            let guard = self.arch.read();
+            flush_memtable = guard
+                .imm_memtables
+                .last()
+                .expect("no imm memtables!")
+                .clone();
+        }
+        // 创建immemtable对应的sst
+        let mut builder = SsTableBuilder::new(self.options.block_size);
+        // 把memtable中的东西flush到sst
+        flush_memtable.flush(&mut builder)?;
+        let sst_id = flush_memtable.id();
+        let sst = Arc::new(builder.build(sst_id, self.path_of_sst(sst_id))?);
+
+        // 从immemtable中删除，并将其添加到l0 sst
+        {
+            let mut guard = self.arch.write();
+            let mut snapshot = guard.as_ref().clone();
+            // 从immemtable中删除
+            let mem = snapshot.imm_memtables.pop().unwrap();
+            assert_eq!(mem.id(), sst_id);
+            // 添加到l0 sst
+            snapshot.l0_sstables.insert(0, sst_id);
+            println!("flushed {}.sst with size={}", sst_id, sst.table_size());
+            snapshot.sstables.insert(sst_id, sst);
+            // 更新snapshot.
+            *guard = Arc::new(snapshot);
+        }
+
+        if self.options.enable_wal {
+            std::fs::remove_file(self.path_of_wal(sst_id))?;
+        }
+
+        self.sync_dir()?;
+
+        Ok(())
     }
 }

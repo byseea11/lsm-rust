@@ -204,12 +204,10 @@ pub fn generate_sst_with_ts(
     builder.build(id, path.as_ref()).unwrap()
 }
 
-// pub fn sync(storage: &LsmStorageInner) {
-//     storage
-//         .force_freeze_memtable(&storage.state_lock.lock())
-//         .unwrap();
-//     storage.force_flush_next_imm_memtable().unwrap();
-// }
+pub fn sync(storage: &LsmStorageInner) {
+    storage.force_freeze_memtable().unwrap();
+    storage.force_flush_next_imm_memtable().unwrap();
+}
 
 // pub fn compaction_bench(storage: Arc<MiniLsm>) {
 //     let mut key_map = BTreeMap::<usize, usize>::new();

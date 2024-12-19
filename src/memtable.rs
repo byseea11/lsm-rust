@@ -1,5 +1,6 @@
 use crate::iterators::StorageIterator;
 use crate::key::KeySlice;
+use crate::sstable::SsTableBuilder;
 use crate::wal::Wal;
 use anyhow::Result;
 use bytes::Bytes;
@@ -108,6 +109,18 @@ impl MemTable {
         .build();
         iter.next().unwrap();
         iter
+    }
+
+    /// immemtable flush到sst
+    pub fn flush(&self, builder: &mut SsTableBuilder) -> Result<()> {
+        for entry in self.map.iter() {
+            builder.add(KeySlice::from_slice(&entry.key()[..]), &entry.value()[..]);
+        }
+        Ok(())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
     }
 }
 
