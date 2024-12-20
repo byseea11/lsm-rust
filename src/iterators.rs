@@ -1,4 +1,5 @@
 pub mod merge_iterator;
+pub mod sst_merge_iterator;
 pub mod two_merge_iterator;
 /// 迭代器是用来遍历容器的，需要有一个position来维护迭代器的位置
 pub trait StorageIterator {

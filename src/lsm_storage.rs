@@ -11,7 +11,9 @@ use parking_lot::{Mutex, MutexGuard, RwLock};
 
 use crate::block::Block;
 
+use crate::compact::CompactionOptions;
 use crate::iterators::merge_iterator::MergeIterator;
+use crate::iterators::sst_merge_iterator::SstMergeIterator;
 use crate::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::iterators::StorageIterator;
 use crate::key::KeySlice;
@@ -29,16 +31,22 @@ pub struct LsmStorageArch {
     pub imm_memtables: Vec<Arc<MemTable>>,
     // memtable和sstable合并层
     pub l0_sstables: Vec<usize>,
+    // 合并的层
+    pub levels: Vec<(usize, Vec<usize>)>,
     // sstable
     pub sstables: HashMap<usize, Arc<SsTable>>,
 }
 
 impl LsmStorageArch {
     fn create(options: &LsmStorageOptions) -> Self {
+        let levels = match &options.compaction_options {
+            CompactionOptions::NoCompaction => vec![(1, Vec::new())],
+        };
         Self {
             memtable: Arc::new(MemTable::create(0)),
             imm_memtables: Vec::new(),
             l0_sstables: Vec::new(),
+            levels,
             sstables: Default::default(),
         }
     }
@@ -53,6 +61,8 @@ pub struct LsmStorageOptions {
     pub target_sst_size: usize,
     // 内存中memtable的数量限制（memtable+imm_memtable）
     pub num_memtable_limit: usize,
+    // 压缩策略
+    pub compaction_options: CompactionOptions,
     // 是否启动wal
     pub enable_wal: bool,
 }
@@ -63,6 +73,7 @@ impl LsmStorageOptions {
             // b(8)->B(10)->K(10)->M(10)->G 4096B=1*1024*4B=4K 2<<20=2^21B=2^11K=2^1M
             block_size: 4096,         //4K
             target_sst_size: 2 << 20, //2M
+            compaction_options: CompactionOptions::NoCompaction,
             enable_wal: false,
             num_memtable_limit: 50,
         }
@@ -72,6 +83,16 @@ impl LsmStorageOptions {
         Self {
             block_size: 4096,
             target_sst_size: 2 << 20,
+            compaction_options: CompactionOptions::NoCompaction,
+            enable_wal: false,
+            num_memtable_limit: 2,
+        }
+    }
+    pub fn default_for_week2_test(compaction_options: CompactionOptions) -> Self {
+        Self {
+            block_size: 4096,
+            target_sst_size: 1 << 20, // 1MB
+            compaction_options,
             enable_wal: false,
             num_memtable_limit: 2,
         }
@@ -196,6 +217,7 @@ impl LsmStorageInner {
         let path = path.as_ref();
         let arch = LsmStorageArch::create(&options);
         let next_sst_id = 1;
+
         if !path.exists() {
             std::fs::create_dir_all(path).context("failed to create DB dir")?;
         }
@@ -209,13 +231,16 @@ impl LsmStorageInner {
         Ok(storage)
     }
 
+    pub fn sync(&self) -> Result<()> {
+        self.arch.read().memtable.sync_wal()
+    }
+
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         // 加锁
         let snapshot = {
             let guard = self.arch.read();
             Arc::clone(&guard)
         };
-
         // 在current memtable中查找数据
         if let Some(value) = snapshot.memtable.get(key) {
             if value.is_empty() {
@@ -223,7 +248,6 @@ impl LsmStorageInner {
             }
             return Ok(Some(value));
         }
-
         // 在immutable memtables中查找数据
         for memtable in snapshot.imm_memtables.iter() {
             if let Some(value) = memtable.get(key) {
@@ -234,9 +258,7 @@ impl LsmStorageInner {
                 return Ok(Some(value));
             }
         }
-
         let mut l0_iters = Vec::with_capacity(snapshot.l0_sstables.len());
-
         let keep_table = |key: &[u8], table: &SsTable| {
             if key_within(
                 key,
@@ -254,7 +276,6 @@ impl LsmStorageInner {
             }
             false
         };
-
         for table in snapshot.l0_sstables.iter() {
             let table = snapshot.sstables[table].clone();
             if keep_table(key, &table) {
@@ -264,12 +285,26 @@ impl LsmStorageInner {
                 )?));
             }
         }
-        let iter = MergeIterator::create(l0_iters);
+        let l0_iter = MergeIterator::create(l0_iters);
+        let mut level_iters = Vec::with_capacity(snapshot.levels.len());
+        for (_, level_sst_ids) in &snapshot.levels {
+            let mut level_ssts = Vec::with_capacity(level_sst_ids.len());
+            for table in level_sst_ids {
+                let table = snapshot.sstables[table].clone();
+                if keep_table(key, &table) {
+                    level_ssts.push(table);
+                }
+            }
+            let level_iter =
+                SstMergeIterator::create_and_seek_to_key(level_ssts, KeySlice::from_slice(key))?;
+            level_iters.push(Box::new(level_iter));
+        }
+
+        let iter = TwoMergeIterator::create(l0_iter, MergeIterator::create(level_iters))?;
 
         if iter.is_valid() && iter.key().raw_ref() == key && !iter.value().is_empty() {
             return Ok(Some(Bytes::copy_from_slice(iter.value())));
         }
-
         Ok(None)
     }
 
@@ -438,7 +473,43 @@ impl LsmStorageInner {
 
         let l0_iter = MergeIterator::create(table_iters);
 
+        let mut level_iters = Vec::with_capacity(snapshot.levels.len());
+        for (_, level_sst_ids) in &snapshot.levels {
+            let mut level_ssts = Vec::with_capacity(level_sst_ids.len());
+            for table in level_sst_ids {
+                let table = snapshot.sstables[table].clone();
+                if range_overlap(
+                    lower,
+                    upper,
+                    table.first_key().as_key_slice(),
+                    table.last_key().as_key_slice(),
+                ) {
+                    level_ssts.push(table);
+                }
+            }
+
+            let level_iter = match lower {
+                Bound::Included(key) => {
+                    SstMergeIterator::create_and_seek_to_key(level_ssts, KeySlice::from_slice(key))?
+                }
+                Bound::Excluded(key) => {
+                    let mut iter = SstMergeIterator::create_and_seek_to_key(
+                        level_ssts,
+                        KeySlice::from_slice(key),
+                    )?;
+                    if iter.is_valid() && iter.key().raw_ref() == key {
+                        iter.next()?;
+                    }
+                    iter
+                }
+                Bound::Unbounded => SstMergeIterator::create_and_seek_to_first(level_ssts)?,
+            };
+            level_iters.push(Box::new(level_iter));
+        }
+
         let iter = TwoMergeIterator::create(memtable_iter, l0_iter)?;
+        let iter = TwoMergeIterator::create(iter, MergeIterator::create(level_iters))?;
+
         Ok(FusedIterator::new(LsmIterator::new(
             iter,
             map_bound(upper),
@@ -474,6 +545,7 @@ impl LsmStorageInner {
             assert_eq!(mem.id(), sst_id);
             // 添加到l0 sst
             snapshot.l0_sstables.insert(0, sst_id);
+
             println!("flushed {}.sst with size={}", sst_id, sst.table_size());
             snapshot.sstables.insert(sst_id, sst);
             // 更新snapshot.

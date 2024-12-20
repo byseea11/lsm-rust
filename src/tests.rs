@@ -6,3 +6,4 @@ mod x4_test_sst;
 mod x5_test_memtable_sst_read;
 mod x6_test_memtable_sst_write;
 mod x7_test_bloom;
+mod x8_compact;

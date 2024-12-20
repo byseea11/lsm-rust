@@ -1,5 +1,6 @@
 mod wrapper;
 
+use lsmxzy::compact::CompactionOptions;
 use rustyline::DefaultEditor;
 use wrapper::mini_lsm_wrapper;
 
@@ -13,9 +14,6 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, ValueEnum)]
 enum CompactionStrategy {
-    Simple,
-    Leveled,
-    Tiered,
     None,
 }
 
@@ -302,6 +300,9 @@ fn main() -> Result<()> {
             target_sst_size: 2 << 20, // 2MB
             num_memtable_limit: 3,
             enable_wal: args.enable_wal,
+            compaction_options: match args.compaction {
+                CompactionStrategy::None => CompactionOptions::NoCompaction,
+            },
         },
     )?;
 

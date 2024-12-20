@@ -32,6 +32,7 @@ impl MockStorage {
             memtable: Arc::new(MemTable::create(0)),
             imm_memtables: Vec::new(),
             l0_sstables: Vec::new(),
+            levels: Vec::new(),
             sstables: Default::default(),
         };
         Self {
