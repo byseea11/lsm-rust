@@ -5,11 +5,11 @@
         [√] iterator    
      [x] sstable  
         [√] block  
-        [x] iterator    
+        [√] iterator    
         [x] bloom filter  
-     [x] lsm storage arch  
-        [x] interface
-        [x] cli
+     [√] lsm storage arch  
+        [√] interface
+        [√] cli
 
 
 # 功能实现

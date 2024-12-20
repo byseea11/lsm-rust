@@ -1,16 +1,16 @@
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-
+pub(crate) mod bloom;
 use crate::block::Block;
 use crate::key::{KeyBytes, KeySlice};
 use anyhow::{anyhow, bail, Result};
 use bytes::{Buf, BufMut};
 mod builder;
 mod iterator;
+use self::bloom::Bloom;
 pub use builder::SsTableBuilder;
 pub use iterator::SsTableIterator;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// 记录key的范围方便快速查询
 pub struct BlockMeta {
