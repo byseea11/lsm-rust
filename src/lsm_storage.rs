@@ -243,7 +243,14 @@ impl LsmStorageInner {
                 table.first_key().as_key_slice(),
                 table.last_key().as_key_slice(),
             ) {
-                return true;
+                // 添加布隆过滤器判断是否存在这个key
+                if let Some(bloom) = &table.bloom {
+                    if bloom.may_contain(farmhash::fingerprint32(key)) {
+                        return true;
+                    }
+                } else {
+                    return true;
+                }
             }
             false
         };

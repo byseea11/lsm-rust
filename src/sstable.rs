@@ -121,6 +121,7 @@ pub struct SsTable {
     id: usize,
     first_key: KeyBytes,
     last_key: KeyBytes,
+    pub(crate) bloom: Option<Bloom>,
 }
 
 impl SsTable {
@@ -131,25 +132,26 @@ impl SsTable {
 
     /// 从文件中读取sstable，一个file是一个sstable
     pub fn open(id: usize, file: FileObject) -> Result<Self> {
-        let len = file.size(); // 获取文件的总大小
-
-        // 创建缓冲区来存储整个文件内容
-        let meta_data = file.read(len - 4, 4)?; // 使用 `read` 方法从文件中读取内容
-
-        let meta_offset = (&meta_data[..]).get_u32() as u64;
-        let raw_data = file.read(meta_offset, len - 4 - meta_offset)?;
-
-        // 从文件数据中提取元数据部分（使用偏移量获取元数据）
-        let block_meta = BlockMeta::decode_block_meta(&raw_data[..])?;
-
-        // 返回解码后的 SsTable 实例
+        // 获取文件的总大小
+        let len = file.size();
+        // 获取布隆过滤器
+        let raw_bloom_offset = file.read(len - 4, 4)?;
+        let bloom_offset = (&raw_bloom_offset[..]).get_u32() as u64;
+        let raw_bloom = file.read(bloom_offset, len - 4 - bloom_offset)?;
+        let bloom_filter = Bloom::decode(&raw_bloom)?;
+        let raw_meta_offset = file.read(bloom_offset - 4, 4)?;
+        // 获取块元数据
+        let block_meta_offset = (&raw_meta_offset[..]).get_u32() as u64;
+        let raw_meta = file.read(block_meta_offset, bloom_offset - 4 - block_meta_offset)?;
+        let block_meta = BlockMeta::decode_block_meta(&raw_meta[..])?;
         Ok(Self {
             file,
             first_key: block_meta.first().unwrap().first_key.clone(),
             last_key: block_meta.last().unwrap().last_key.clone(),
             block_meta,
-            block_meta_offset: meta_offset as usize,
+            block_meta_offset: block_meta_offset as usize,
             id,
+            bloom: Some(bloom_filter),
         })
     }
 
@@ -167,6 +169,7 @@ impl SsTable {
             id,
             first_key,
             last_key,
+            bloom: None,
         }
     }
 
