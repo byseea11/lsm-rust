@@ -578,7 +578,7 @@ impl LsmStorageInner {
         }
 
         let iter = TwoMergeIterator::create(memtable_iter, l0_iter)?;
-        // let iter = TwoMergeIterator::create(iter, MergeIterator::create(level_iters))?;
+        let iter = TwoMergeIterator::create(iter, MergeIterator::create(level_iters))?;
 
         Ok(FusedIterator::new(LsmIterator::new(
             iter,

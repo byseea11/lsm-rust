@@ -38,6 +38,8 @@ impl SsTableBuilder {
             self.first_key.set_from_slice(key);
         }
 
+        self.key_hashes.push(farmhash::fingerprint32(key.raw_ref()));
+
         if self.builder.add(key, value) {
             self.last_key.set_from_slice(key);
             return;

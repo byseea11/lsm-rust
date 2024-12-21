@@ -9,13 +9,13 @@ use anyhow::{bail, Result};
 use bytes::Bytes;
 use std::ops::Bound;
 /// Represents the internal type for an LSM iterator. This type will be changed across the tutorial for multiple times.
-// type LsmIteratorInner = TwoMergeIterator<
-//     TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>,
-//     MergeIterator<SstMergeIterator>,
-// >;
+type LsmIteratorInner = TwoMergeIterator<
+    TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>,
+    MergeIterator<SstMergeIterator>,
+>;
 
-type LsmIteratorInner =
-    TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>;
+// type LsmIteratorInner =
+//     TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>;
 
 pub struct LsmIterator {
     inner: LsmIteratorInner,
