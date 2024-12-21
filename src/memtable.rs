@@ -12,8 +12,9 @@ use std::path::Path;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 /// map：跳表，用于存储数据
+/// wal: 日志文件
 /// id：每个memtable都有一个id方便后面压缩
-/// approximate_size：用于判断是否到达阈值
+/// mem_size：用于判断是否到达阈值
 pub struct MemTable {
     map: Arc<SkipMap<Bytes, Bytes>>,
     wal: Option<Wal>,

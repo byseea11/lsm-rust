@@ -11,7 +11,10 @@ use parking_lot::{Mutex, MutexGuard, RwLock};
 
 use crate::block::Block;
 
-use crate::compact::CompactionOptions;
+use crate::compact::{
+    CompactionController, CompactionOptions, SimpleLeveledCompactionController,
+    SimpleLeveledCompactionOptions,
+};
 use crate::iterators::merge_iterator::MergeIterator;
 use crate::iterators::sst_merge_iterator::SstMergeIterator;
 use crate::iterators::two_merge_iterator::TwoMergeIterator;
@@ -40,6 +43,10 @@ pub struct LsmStorageArch {
 impl LsmStorageArch {
     fn create(options: &LsmStorageOptions) -> Self {
         let levels = match &options.compaction_options {
+            CompactionOptions::Simple(SimpleLeveledCompactionOptions { max_levels, .. }) => (1
+                ..=*max_levels)
+                .map(|level| (level, Vec::new()))
+                .collect::<Vec<_>>(),
             CompactionOptions::NoCompaction => vec![(1, Vec::new())],
         };
         Self {
@@ -106,18 +113,33 @@ pub struct MiniLsm {
     flush_notifier: crossbeam_channel::Sender<()>,
     /// 开启flush线程
     flush_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// Notifies the compaction thread to stop working. (In week 2)
+    compaction_notifier: crossbeam_channel::Sender<()>,
+    /// The handle for the compaction thread. (In week 2)
+    compaction_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+impl Drop for MiniLsm {
+    fn drop(&mut self) {
+        self.compaction_notifier.send(()).ok();
+        self.flush_notifier.send(()).ok();
+    }
 }
 
 impl MiniLsm {
     /// 启动minilsm
     pub fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Arc<Self>> {
         let inner = Arc::new(LsmStorageInner::open(path, options)?);
+        let (tx1, rx) = crossbeam_channel::unbounded();
+        let compaction_thread = inner.spawn_compaction_thread(rx)?;
         let (tx2, rx) = crossbeam_channel::unbounded();
         let flush_thread = inner.spawn_flush_thread(rx)?;
         Ok(Arc::new(Self {
             inner,
             flush_notifier: tx2,
             flush_thread: Mutex::new(flush_thread),
+            compaction_notifier: tx1,
+            compaction_thread: Mutex::new(compaction_thread),
         }))
     }
 
@@ -126,7 +148,46 @@ impl MiniLsm {
     }
 
     pub fn close(&self) -> Result<()> {
-        unimplemented!()
+        self.inner.sync_dir()?;
+        self.compaction_notifier.send(()).ok();
+        self.flush_notifier.send(()).ok();
+
+        let mut compaction_thread = self.compaction_thread.lock();
+        if let Some(compaction_thread) = compaction_thread.take() {
+            compaction_thread
+                .join()
+                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        }
+        let mut flush_thread = self.flush_thread.lock();
+        if let Some(flush_thread) = flush_thread.take() {
+            flush_thread
+                .join()
+                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+        }
+
+        if self.inner.options.enable_wal {
+            self.inner.sync()?;
+            self.inner.sync_dir()?;
+            return Ok(());
+        }
+
+        // create memtable and skip updating manifest
+        if !self.inner.arch.read().memtable.is_empty() {
+            self.inner
+                .freeze_memtable_with_memtable(Arc::new(MemTable::create(
+                    self.inner.next_sst_id(),
+                )))?;
+        }
+
+        while {
+            let snapshot = self.inner.arch.read();
+            !snapshot.imm_memtables.is_empty()
+        } {
+            self.inner.force_flush_next_imm_memtable()?;
+        }
+        self.inner.sync_dir()?;
+
+        Ok(())
     }
 
     pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
@@ -173,6 +234,7 @@ pub(crate) struct LsmStorageInner {
     path: PathBuf,
     next_sst_id: AtomicUsize,
     pub(crate) options: Arc<LsmStorageOptions>,
+    pub(crate) compaction_controller: CompactionController,
 }
 
 fn range_overlap(
@@ -218,6 +280,13 @@ impl LsmStorageInner {
         let arch = LsmStorageArch::create(&options);
         let next_sst_id = 1;
 
+        let compaction_controller = match &options.compaction_options {
+            CompactionOptions::Simple(options) => CompactionController::Simple(
+                SimpleLeveledCompactionController::new(options.clone()),
+            ),
+            CompactionOptions::NoCompaction => CompactionController::NoCompaction,
+        };
+
         if !path.exists() {
             std::fs::create_dir_all(path).context("failed to create DB dir")?;
         }
@@ -225,6 +294,7 @@ impl LsmStorageInner {
             arch: Arc::new(RwLock::new(Arc::new(arch))),
             path: path.to_path_buf(),
             next_sst_id: AtomicUsize::new(next_sst_id),
+            compaction_controller,
             options: options.into(),
         };
 
@@ -508,7 +578,7 @@ impl LsmStorageInner {
         }
 
         let iter = TwoMergeIterator::create(memtable_iter, l0_iter)?;
-        let iter = TwoMergeIterator::create(iter, MergeIterator::create(level_iters))?;
+        // let iter = TwoMergeIterator::create(iter, MergeIterator::create(level_iters))?;
 
         Ok(FusedIterator::new(LsmIterator::new(
             iter,
