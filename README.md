@@ -3,13 +3,17 @@
      [√] memtable 
         [√] wal  
         [√] iterator    
-     [x] sstable  
+     [√] sstable  
         [√] block  
         [√] iterator    
-        [x] bloom filter  
+        [√] bloom filter  
      [√] lsm storage arch  
         [√] interface
         [√] cli
+     [√] Compact
+        [√] l0 l1 compact
+        [X] simple compact
+     [X] mainfest
 
 
 # 功能实现
