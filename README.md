@@ -12,8 +12,8 @@
         [√] cli
      [√] Compact
         [√] l0 l1 compact
-        [X] simple compact
-     [X] mainfest
+        [√] simple compact
+     [√] mainfest
 
 
 # 功能实现
@@ -43,3 +43,10 @@
 
 ### task6【cli】
     1. 修改cli文件，实现本项目功能
+
+### task7【compact】
+    1. 实现l0_compact
+    2. 实现ln_compact
+
+### task7【manifest】
+    1. 实现manifest  
