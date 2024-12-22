@@ -21,6 +21,7 @@ use crate::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::iterators::StorageIterator;
 use crate::key::KeySlice;
 use crate::lsm_iterator::{FusedIterator, LsmIterator};
+use crate::manifest::{Manifest, ManifestRecord};
 use crate::memtable::{map_bound, MemTable};
 use crate::sstable::{FileObject, SsTable, SsTableBuilder, SsTableIterator};
 
@@ -235,6 +236,7 @@ pub(crate) struct LsmStorageInner {
     next_sst_id: AtomicUsize,
     pub(crate) options: Arc<LsmStorageOptions>,
     pub(crate) compaction_controller: CompactionController,
+    pub(crate) manifest: Option<Manifest>,
 }
 
 fn range_overlap(
@@ -277,8 +279,9 @@ impl LsmStorageInner {
     /// not exist.
     pub(crate) fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Self> {
         let path = path.as_ref();
-        let arch = LsmStorageArch::create(&options);
-        let next_sst_id = 1;
+        let mut arch = LsmStorageArch::create(&options);
+        let mut next_sst_id = 1;
+        let manifest;
 
         let compaction_controller = match &options.compaction_options {
             CompactionOptions::Simple(options) => CompactionController::Simple(
@@ -290,11 +293,95 @@ impl LsmStorageInner {
         if !path.exists() {
             std::fs::create_dir_all(path).context("failed to create DB dir")?;
         }
+        let manifest_path = path.join("MANIFEST");
+        if !manifest_path.exists() {
+            if options.enable_wal {
+                arch.memtable = Arc::new(MemTable::create_with_wal(
+                    arch.memtable.id(),
+                    Self::path_of_wal_static(path, arch.memtable.id()),
+                )?);
+            }
+            manifest = Manifest::create(&manifest_path).context("failed to create manifest")?;
+            manifest.add_record_when_init(ManifestRecord::NewMemtable(arch.memtable.id()))?;
+        } else {
+            let (m, records) = Manifest::recover(&manifest_path)?;
+            let mut memtables = BTreeSet::new();
+            for record in records {
+                match record {
+                    ManifestRecord::Flush(sst_id) => {
+                        let res = memtables.remove(&sst_id);
+                        assert!(res, "memtable not exist?");
+                        if compaction_controller.flush_to_l0() {
+                            arch.l0_sstables.insert(0, sst_id);
+                        } else {
+                            arch.levels.insert(0, (sst_id, vec![sst_id]));
+                        }
+                        next_sst_id = next_sst_id.max(sst_id);
+                    }
+                    ManifestRecord::NewMemtable(x) => {
+                        next_sst_id = next_sst_id.max(x);
+                        memtables.insert(x);
+                    }
+                    ManifestRecord::Compaction(task, output) => {
+                        let (new_state, _) =
+                            compaction_controller.apply_compaction_result(&arch, &task, &output);
+                        // TODO: apply remove again
+                        arch = new_state;
+                        next_sst_id =
+                            next_sst_id.max(output.iter().max().copied().unwrap_or_default());
+                    }
+                }
+            }
+
+            let mut sst_cnt = 0;
+            // recover SSTs
+            for table_id in arch
+                .l0_sstables
+                .iter()
+                .chain(arch.levels.iter().flat_map(|(_, files)| files))
+            {
+                let table_id = *table_id;
+                let sst = SsTable::open(
+                    table_id,
+                    FileObject::open(&Self::path_of_sst_static(path, table_id))
+                        .with_context(|| format!("failed to open SST: {}", table_id))?,
+                )?;
+                arch.sstables.insert(table_id, Arc::new(sst));
+                sst_cnt += 1;
+            }
+            println!("{} SSTs opened", sst_cnt);
+
+            next_sst_id += 1;
+
+            // recover memtables
+            if options.enable_wal {
+                let mut wal_cnt = 0;
+                for id in memtables.iter() {
+                    let memtable =
+                        MemTable::recover_from_wal(*id, Self::path_of_wal_static(path, *id))?;
+                    if !memtable.is_empty() {
+                        arch.imm_memtables.insert(0, Arc::new(memtable));
+                        wal_cnt += 1;
+                    }
+                }
+                println!("{} WALs recovered", wal_cnt);
+                arch.memtable = Arc::new(MemTable::create_with_wal(
+                    next_sst_id,
+                    Self::path_of_wal_static(path, next_sst_id),
+                )?);
+            } else {
+                arch.memtable = Arc::new(MemTable::create(next_sst_id));
+            }
+            m.add_record_when_init(ManifestRecord::NewMemtable(arch.memtable.id()))?;
+            next_sst_id += 1;
+            manifest = m;
+        };
         let storage = Self {
             arch: Arc::new(RwLock::new(Arc::new(arch))),
             path: path.to_path_buf(),
             next_sst_id: AtomicUsize::new(next_sst_id),
             compaction_controller,
+            manifest: Some(manifest),
             options: options.into(),
         };
 
@@ -422,6 +509,12 @@ impl LsmStorageInner {
         };
 
         self.freeze_memtable_with_memtable(memtable)?;
+
+        self.manifest
+            .as_ref()
+            .unwrap()
+            .add_record(ManifestRecord::NewMemtable(memtable_id))?;
+
         // 标志着一个数据写入周期的结束
         self.sync_dir()?;
 
@@ -625,6 +718,11 @@ impl LsmStorageInner {
         if self.options.enable_wal {
             std::fs::remove_file(self.path_of_wal(sst_id))?;
         }
+
+        self.manifest
+            .as_ref()
+            .unwrap()
+            .add_record(ManifestRecord::Flush(sst_id))?;
 
         self.sync_dir()?;
 

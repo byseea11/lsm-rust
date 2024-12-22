@@ -6,6 +6,7 @@ use crate::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::iterators::StorageIterator;
 use crate::key::KeySlice;
 use crate::lsm_storage::{LsmStorageArch, LsmStorageInner};
+use crate::manifest::ManifestRecord;
 use crate::sstable::{SsTable, SsTableBuilder, SsTableIterator};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -166,6 +167,10 @@ impl LsmStorageInner {
             *self.arch.write() = Arc::new(state);
             // 同步目录（保存更改）
             self.sync_dir()?;
+            self.manifest
+                .as_ref()
+                .unwrap()
+                .add_record(ManifestRecord::Compaction(compaction_task, ids.clone()))?;
         }
         // 删除原来的 SST 文件
         for sst in l0_sstables.iter().chain(l1_sstables.iter()) {
@@ -303,7 +308,6 @@ impl LsmStorageInner {
             let state = self.arch.read(); // 获取存储架构的只读状态
             state.clone() // 克隆状态，避免修改原始状态
         };
-
         // 生成压缩任务
         let task = self
             .compaction_controller
@@ -313,7 +317,6 @@ impl LsmStorageInner {
         let Some(task) = task else {
             return Ok(()); // 没有任务要执行，直接返回
         };
-
         // 打印当前的压缩任务并保存当前的存储结构
         self.dump_structure(); // 打印当前存储结构（用于调试）
         println!("running compaction task: {:?}", task); // 打印当前的压缩任务
@@ -355,7 +358,10 @@ impl LsmStorageInner {
             *state = Arc::new(snapshot); // 更新存储架构的状态为新的快照
             drop(state); // 释放可写状态的锁
             self.sync_dir()?; // 同步目录，确保文件系统更新
-
+            self.manifest
+                .as_ref()
+                .unwrap()
+                .add_record(ManifestRecord::Compaction(task, new_sst_ids))?;
             ssts_to_remove // 返回被移除的 SST 文件列表
         };
 

@@ -1,4 +1,5 @@
 mod harness;
+mod x10_manifast;
 mod x1_test_block;
 mod x2_test_memtable;
 mod x3_test_iterators;
