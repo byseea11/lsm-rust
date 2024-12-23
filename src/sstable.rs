@@ -14,7 +14,7 @@ pub use iterator::SsTableIterator;
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// 记录key的范围方便快速查询
 pub struct BlockMeta {
-    /// block的offset方便从file中把block恢复过来
+    /// offset快速定位
     pub offset: usize,
     /// block的第一个key
     pub first_key: KeyBytes,

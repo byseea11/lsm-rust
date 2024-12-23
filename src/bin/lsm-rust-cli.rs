@@ -55,6 +55,17 @@ impl ReplHandler {
                 self.lsm.delete(key.as_bytes())?;
                 println!("{} deleted", key);
             }
+            Command::Update { key, value } => {
+                if let Some(old_value) = self.lsm.get(key.as_bytes())? {
+                    self.lsm.put(key.as_bytes(), value.as_bytes())?;
+                    println!(
+                        "key: {}, before update: {:?}, update: {:?}",
+                        key, old_value, value
+                    );
+                } else {
+                    println!("{} not exist", key);
+                }
+            }
             Command::Get { key } => {
                 if let Some(value) = self.lsm.get(key.as_bytes())? {
                     println!("{}={:?}", key, value);
@@ -134,6 +145,10 @@ enum Command {
         begin: Option<String>,
         end: Option<String>,
     },
+    Update {
+        key: String,
+        value: String,
+    },
     Flush,
     Quit,
     Close,
@@ -178,6 +193,13 @@ impl Command {
             )(i)
         };
 
+        let update = |i| {
+            map(
+                tuple((tag_no_case("update"), space1, string, space1, string)),
+                |(_, _, key, _, value)| Command::Update { key, value },
+            )(i)
+        };
+
         let get = |i| {
             map(
                 tuple((tag_no_case("get"), space1, string)),
@@ -205,6 +227,7 @@ impl Command {
                 del,
                 get,
                 scan,
+                update,
                 map(tag_no_case("flush"), |_| Command::Flush),
                 map(tag_no_case("quit"), |_| Command::Quit),
                 map(tag_no_case("close"), |_| Command::Close),

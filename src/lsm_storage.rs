@@ -26,18 +26,16 @@ use crate::memtable::{map_bound, MemTable};
 use crate::sstable::{FileObject, SsTable, SsTableBuilder, SsTableIterator};
 
 #[derive(Clone)]
-
-/// 目前只实现到imm_memtables(不可变的memtable)这部分，所以把lsmstorageArch先定为这个两个部分
 pub struct LsmStorageArch {
     /// 当前的memtable
     pub memtable: Arc<MemTable>,
-    /// Immutable memtables, 不可变memtable，当memtable达到阈值之后会merge到imm_memtable
+    /// Immutable memtables, 不可变memtable
     pub imm_memtables: Vec<Arc<MemTable>>,
-    // memtable和sstable合并层
+    // l0的索引
     pub l0_sstables: Vec<usize>,
-    // 合并的层
+    // ln的索引
     pub levels: Vec<(usize, Vec<usize>)>,
-    // sstable
+    // sstables
     pub sstables: HashMap<usize, Arc<SsTable>>,
 }
 
