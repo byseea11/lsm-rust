@@ -1,3 +1,19 @@
+# 使用说明
+运行一下程序即可进入交互：
+```shell
+./run.sh
+```
+项目提供：fill、get、update、del、scan、close、quite、flush共8个关键字，使用方法如下：
+```rust
+fill 100 200
+get 100
+update 100 "hahahha"
+del 100
+scan 100 150
+close
+quite
+flush
+```
 # todo list
 
      [√] memtable 

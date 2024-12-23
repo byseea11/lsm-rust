@@ -1,3 +1,3 @@
 git add .
-git commit -m "修改部分注解"
+git commit -m "readme添加执行说明"
 git push -u origin main
